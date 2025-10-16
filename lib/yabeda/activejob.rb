@@ -101,6 +101,8 @@ module Yabeda
               activejob_enqueued_total.increment(labels)
             end
           end
+
+          Yabeda::ActiveJob.after_event_block.call(event) if Yabeda::ActiveJob.after_event_block.respond_to?(:call)
         end
       end
     end
