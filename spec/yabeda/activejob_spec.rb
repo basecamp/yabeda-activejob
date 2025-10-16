@@ -55,41 +55,31 @@ RSpec.describe Yabeda::ActiveJob, type: :integration do
         .with(kind_of(Float))
     end
 
-    describe "#job_latency" do
+    describe "job latency calculation" do
       # Rails 7.1.4 and above
-      it "returns the correct latency from end_time in seconds" do
+      it "measures correct latency from end_time in seconds", queue_adapter: :test do
         start_time = Time.now
-        job = HelloJob.new
-        job.enqueued_at = start_time
-        event = ActiveSupport::Notifications::Event.new(
-          "perform_start.active_job",
-          nil,
-          nil,
-          1,
-          { job: job },
-        )
-        end_time_in_s = 1.minute.from_now(start_time).to_f
-        allow(event).to receive(:end).and_return(end_time_in_s)
 
-        expect(described_class.job_latency(event)).to be_within(0.1).of(60.0)
+        # Mock the event end time to simulate 60 seconds later
+        allow_any_instance_of(ActiveSupport::Notifications::Event).to receive(:end).and_return(1.minute.from_now(start_time).to_f) # rubocop:disable RSpec/AnyInstance
+
+        expect { HelloJob.perform_later }.to have_enqueued_job.on_queue("default")
+        expect { perform_enqueued_jobs }.to measure_yabeda_histogram(Yabeda.activejob.latency)
+          .with_tags(queue: "default", activejob: "HelloJob", executions: "1")
+          .with(be_within(0.1).of(60.0))
       end
 
       # Rails 7.1.3 and below
-      it "returns the correct latency from end_time in milliseconds" do
+      it "measures correct latency from end_time in milliseconds", queue_adapter: :test do
         start_time = Time.now
-        job = HelloJob.new
-        job.enqueued_at = start_time
-        event = ActiveSupport::Notifications::Event.new(
-          "perform_start.active_job",
-          nil,
-          nil,
-          1,
-          { job: job },
-        )
-        end_time_in_ms = 1.minute.from_now(start_time).to_f * 1000
-        allow(event).to receive(:end).and_return(end_time_in_ms)
 
-        expect(described_class.job_latency(event)).to be_within(0.1).of(60.0)
+        # Mock the event end time to simulate 60 seconds later (in milliseconds)
+        allow_any_instance_of(ActiveSupport::Notifications::Event).to receive(:end).and_return(1.minute.from_now(start_time).to_f * 1000) # rubocop:disable RSpec/AnyInstance
+
+        expect { HelloJob.perform_later }.to have_enqueued_job.on_queue("default")
+        expect { perform_enqueued_jobs }.to measure_yabeda_histogram(Yabeda.activejob.latency)
+          .with_tags(queue: "default", activejob: "HelloJob", executions: "1")
+          .with(be_within(0.1).of(60.0))
       end
     end
 
