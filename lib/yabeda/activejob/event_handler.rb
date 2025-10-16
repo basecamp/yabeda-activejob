@@ -66,13 +66,12 @@ class Yabeda::ActiveJob::EventHandler
     attr_reader :event
 
     def job_latency
-      enqueue_time = event.payload[:job].enqueued_at
-      return nil unless enqueue_time.present?
+      if enqueue_time = event.payload[:job].enqueued_at
+        enqueue_time = parse_event_time(enqueue_time)
+        perform_at_time = parse_event_time(event.end)
 
-      enqueue_time = parse_event_time(enqueue_time)
-      perform_at_time = parse_event_time(event.end)
-
-      perform_at_time - enqueue_time
+        perform_at_time - enqueue_time
+      end
     end
 
     def ms2s(milliseconds)
