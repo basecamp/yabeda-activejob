@@ -93,13 +93,11 @@ class Yabeda::ActiveJob::EventHandler
     end
 
     def common_labels(job)
-      labels = {
+      Yabeda.default_tags.reverse_merge(
         activejob: job.class.to_s,
         queue: job.queue_name,
         executions: job.executions.to_s,
-      }
-
-      labels.merge(Yabeda.default_tags.slice(*Yabeda.default_tags.keys - labels.keys))
+      )
     end
 
     def call_after_event_block
