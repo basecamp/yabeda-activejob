@@ -23,6 +23,8 @@ module Yabeda
                                  comment: "A counter of the total number of activejobs executed."
         counter :enqueued_total, tags: %i[queue activejob executions],
                                  comment: "A counter of the total number of activejobs enqueued."
+        counter :scheduled_total, tags: %i[queue activejob executions],
+                                  comment: "A counter of the total number of activejobs scheduled for future execution."
         counter :success_total, tags: %i[queue activejob executions],
                                 comment: "A counter of the total number of activejobs successfully processed."
         counter :failed_total, tags: %i[queue activejob executions failure_reason],
@@ -61,61 +63,91 @@ module Yabeda
 
         # start job event
         ActiveSupport::Notifications.subscribe "perform_start.active_job" do |*args|
-          event = ActiveSupport::Notifications::Event.new(*args)
+          event, labels = Yabeda::ActiveJob.common_event_and_labels(*args)
 
-          labels = {
-            activejob: event.payload[:job].class.to_s,
-            queue: event.payload[:job].queue_name,
-            executions: event.payload[:job].executions.to_s,
-          }
-
-          labels.merge!(event.payload.slice(*Yabeda.default_tags.keys - labels.keys))
           job_latency = Yabeda::ActiveJob.job_latency(event)
           activejob_latency.measure(labels, job_latency) if job_latency.present?
           Yabeda::ActiveJob.after_event_block.call(event) if Yabeda::ActiveJob.after_event_block.respond_to?(:call)
         end
 
         ActiveSupport::Notifications.subscribe "enqueue.active_job" do |*args|
+          event, labels = Yabeda::ActiveJob.common_event_and_labels(*args)
+
+          activejob_enqueued_total.increment(labels)
+
+          Yabeda::ActiveJob.after_event_block.call(event) if Yabeda::ActiveJob.after_event_block.respond_to?(:call)
+        end
+
+        ActiveSupport::Notifications.subscribe "enqueue_at.active_job" do |*args|
+          event, labels = Yabeda::ActiveJob.common_event_and_labels(*args)
+
+          activejob_scheduled_total.increment(labels)
+
+          Yabeda::ActiveJob.after_event_block.call(event) if Yabeda::ActiveJob.after_event_block.respond_to?(:call)
+        end
+
+        ActiveSupport::Notifications.subscribe "enqueue_all.active_job" do |*args|
           event = ActiveSupport::Notifications::Event.new(*args)
 
-          labels = {
-            activejob: event.payload[:job].class.to_s,
-            queue: event.payload[:job].queue_name,
-            executions: event.payload[:job].executions.to_s,
-          }
+          event.payload[:jobs].each do |job|
+            labels = {
+              activejob: job.class.to_s,
+              queue: job.queue_name,
+              executions: job.executions.to_s,
+            }
 
-          labels.merge!(event.payload.slice(*Yabeda.default_tags.keys - labels.keys))
-          activejob_enqueued_total.increment(labels)
-          Yabeda::ActiveJob.after_event_block.call(event) if Yabeda::ActiveJob.after_event_block.respond_to?(:call)
+            labels.merge!(event.payload.slice(*Yabeda.default_tags.keys - labels.keys))
+            if job.scheduled_at
+              activejob_scheduled_total.increment(labels)
+            else
+              activejob_enqueued_total.increment(labels)
+            end
+          end
         end
       end
     end
     # rubocop: enable Metrics/MethodLength, Metrics/BlockLength, Metrics/AbcSize
 
-    def self.job_latency(event)
-      enqueue_time = event.payload[:job].enqueued_at
-      return nil unless enqueue_time.present?
+    class << self
+      def job_latency(event)
+        enqueue_time = event.payload[:job].enqueued_at
+        return nil unless enqueue_time.present?
 
-      enqueue_time = parse_event_time(enqueue_time)
-      perform_at_time = parse_event_time(event.end)
+        enqueue_time = parse_event_time(enqueue_time)
+        perform_at_time = parse_event_time(event.end)
 
-      perform_at_time - enqueue_time
-    end
+        perform_at_time - enqueue_time
+      end
 
-    def self.ms2s(milliseconds)
-      (milliseconds.to_f / 1000).round(3)
-    end
+      def ms2s(milliseconds)
+        (milliseconds.to_f / 1000).round(3)
+      end
 
-    def self.parse_event_time(time)
-      case time
-      when Time   then time
-      when String then Time.parse(time).utc
-      else
-        if time > 1e12
-          Time.at(ms2s(time)).utc
+      def parse_event_time(time)
+        case time
+        when Time   then time
+        when String then Time.parse(time).utc
         else
-          Time.at(time).utc
+          if time > 1e12
+            Time.at(ms2s(time)).utc
+          else
+            Time.at(time).utc
+          end
         end
+      end
+
+      def common_event_and_labels(*event_args)
+        event = ActiveSupport::Notifications::Event.new(*event_args)
+
+        labels = {
+          activejob: event.payload[:job].class.to_s,
+          queue: event.payload[:job].queue_name,
+          executions: event.payload[:job].executions.to_s,
+        }
+
+        labels.merge!(event.payload.slice(*Yabeda.default_tags.keys - labels.keys))
+
+        [event, labels]
       end
     end
   end
