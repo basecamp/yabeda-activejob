@@ -42,7 +42,7 @@ module Yabeda
 
         # job complete event
         ActiveSupport::Notifications.subscribe "perform.active_job" do |*args|
-          event = ActiveSupport::Notifications::Event.new(*args)
+          event = Yabeda::ActiveJob.common_event(*args)
           labels = {
             activejob: event.payload[:job].class.to_s,
             queue: event.payload[:job].queue_name.to_s,
@@ -63,7 +63,8 @@ module Yabeda
 
         # start job event
         ActiveSupport::Notifications.subscribe "perform_start.active_job" do |*args|
-          event, labels = Yabeda::ActiveJob.common_event_and_labels(*args)
+          event = Yabeda::ActiveJob.common_event(*args)
+          labels = Yabeda::ActiveJob.common_labels(event.payload[:job])
 
           job_latency = Yabeda::ActiveJob.job_latency(event)
           activejob_latency.measure(labels, job_latency) if job_latency.present?
@@ -71,7 +72,8 @@ module Yabeda
         end
 
         ActiveSupport::Notifications.subscribe "enqueue.active_job" do |*args|
-          event, labels = Yabeda::ActiveJob.common_event_and_labels(*args)
+          event = Yabeda::ActiveJob.common_event(*args)
+          labels = Yabeda::ActiveJob.common_labels(event.payload[:job])
 
           activejob_enqueued_total.increment(labels)
 
@@ -79,7 +81,8 @@ module Yabeda
         end
 
         ActiveSupport::Notifications.subscribe "enqueue_at.active_job" do |*args|
-          event, labels = Yabeda::ActiveJob.common_event_and_labels(*args)
+          event = Yabeda::ActiveJob.common_event(*args)
+          labels = Yabeda::ActiveJob.common_labels(event.payload[:job])
 
           activejob_scheduled_total.increment(labels)
 
@@ -87,16 +90,11 @@ module Yabeda
         end
 
         ActiveSupport::Notifications.subscribe "enqueue_all.active_job" do |*args|
-          event = ActiveSupport::Notifications::Event.new(*args)
+          event = Yabeda::ActiveJob.common_event(*args)
 
           event.payload[:jobs].each do |job|
-            labels = {
-              activejob: job.class.to_s,
-              queue: job.queue_name,
-              executions: job.executions.to_s,
-            }
+            labels = Yabeda::ActiveJob.common_labels(job)
 
-            labels.merge!(event.payload.slice(*Yabeda.default_tags.keys - labels.keys))
             if job.scheduled_at
               activejob_scheduled_total.increment(labels)
             else
@@ -136,18 +134,18 @@ module Yabeda
         end
       end
 
-      def common_event_and_labels(*event_args)
-        event = ActiveSupport::Notifications::Event.new(*event_args)
+      def common_event(*event_args)
+        ActiveSupport::Notifications::Event.new(*event_args)
+      end
 
+      def common_labels(job)
         labels = {
-          activejob: event.payload[:job].class.to_s,
-          queue: event.payload[:job].queue_name,
-          executions: event.payload[:job].executions.to_s,
+          activejob: job.class.to_s,
+          queue: job.queue_name,
+          executions: job.executions.to_s,
         }
 
-        labels.merge!(event.payload.slice(*Yabeda.default_tags.keys - labels.keys))
-
-        [event, labels]
+        labels.merge(Yabeda.default_tags.slice(*Yabeda.default_tags.keys - labels.keys))
       end
     end
   end
